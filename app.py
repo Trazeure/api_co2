@@ -3,6 +3,7 @@ from typing import List, Optional
 import pandas as pd
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+import os
 
 # Modelo de datos para validación
 class CO2Data(BaseModel):
@@ -15,6 +16,9 @@ class CO2Data(BaseModel):
 
     class Config:
         from_attributes = True
+
+# Obtener el puerto de la variable de entorno
+PORT = int(os.getenv('PORT', 8000))
 
 # Inicialización de la aplicación
 app = FastAPI(
@@ -34,7 +38,7 @@ app.add_middleware(
 
 # Carga de datos
 try:
-    df = pd.read_csv(r'C:\Users\Desti\OneDrive\Escritorio\api_c02\data\df_co2_countrys.csv')
+    df = pd.read_csv('data/df_co2_countrys.csv')
 except Exception as e:
     print(f"Error al cargar el archivo CSV: {e}")
     df = pd.DataFrame()  # DataFrame vacío como fallback
@@ -154,6 +158,105 @@ async def get_statistics_summary():
         "entity_types": df['parent_type'].unique().tolist()
     }
 
+# Endpoint para obtener datos por entidad
+@app.get("/entity/{entity_name}", response_model=List[CO2Data], tags=["Entidades"])
+async def get_entity_data(
+    entity_name: str,
+    year: Optional[int] = Query(None, description="Filtrar por año específico")
+):
+    """
+    Obtiene datos para una entidad específica.
+    Opcionalmente se puede filtrar por año.
+    """
+    query = df['parent_entity'].str.lower() == entity_name.lower()
+    if year:
+        query &= (df['year'] == year)
+    
+    entity_data = df[query]
+    
+    if entity_data.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No se encontraron datos para la entidad: {entity_name}"
+        )
+    
+    return entity_data.to_dict(orient='records')
+
+# Endpoint para obtener datos por tipo de entidad
+@app.get("/entity_type/{entity_type}", response_model=List[CO2Data], tags=["Entidades"])
+async def get_entity_type_data(
+    entity_type: str,
+    year: Optional[int] = Query(None, description="Filtrar por año específico")
+):
+    """
+    Obtiene datos para un tipo de entidad específico.
+    Opcionalmente se puede filtrar por año.
+    """
+    query = df['parent_type'].str.lower() == entity_type.lower()
+    if year:
+        query &= (df['year'] == year)
+    
+    entity_type_data = df[query]
+    
+    if entity_type_data.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No se encontraron datos para el tipo de entidad: {entity_type}"
+        )
+    
+    return entity_type_data.to_dict(orient='records')
+
+# Endpoint para comparar países
+@app.get("/compare_countries/", tags=["Comparaciones"])
+async def compare_countries(
+    countries: List[str] = Query(..., description="Lista de países a comparar"),
+    year: Optional[int] = Query(None, description="Año específico para la comparación")
+):
+    """
+    Compara las emisiones de CO2 entre varios países.
+    Opcionalmente se puede especificar un año.
+    """
+    query = df['country'].str.lower().isin([c.lower() for c in countries])
+    if year:
+        query &= (df['year'] == year)
+    
+    comparison_data = df[query]
+    
+    if comparison_data.empty:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontraron datos para los países especificados"
+        )
+    
+    return comparison_data.to_dict(orient='records')
+
+# Endpoint para obtener tendencias temporales
+@app.get("/trends/{country}", tags=["Tendencias"])
+async def get_trends(
+    country: str,
+    start_year: Optional[int] = Query(None, description="Año inicial"),
+    end_year: Optional[int] = Query(None, description="Año final")
+):
+    """
+    Obtiene tendencias temporales de emisiones de CO2 para un país.
+    Opcionalmente se puede especificar un rango de años.
+    """
+    query = df['country'].str.lower() == country.lower()
+    if start_year:
+        query &= (df['year'] >= start_year)
+    if end_year:
+        query &= (df['year'] <= end_year)
+    
+    trend_data = df[query].sort_values('year')
+    
+    if trend_data.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No se encontraron datos para el país: {country}"
+        )
+    
+    return trend_data.to_dict(orient='records')
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, reload=True)
